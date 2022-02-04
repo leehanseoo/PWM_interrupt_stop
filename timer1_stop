@@ -1,0 +1,132 @@
+#include <18F452.h>
+#device *=16 adc=10
+#use delay(clock=20000000)
+#use RS232(baud=9600, parity=N, xmit=PIN_C6, rcv=PIN_C7)
+
+#include <stdlib.h>
+#include <myreg.h>
+
+long k, value;
+long int count;
+long sec_count;
+int num;
+char ch;
+char st[8];
+
+#int_timer1
+void timer1_isr()
+{
+   TMR1H=0xcf;
+   TMR1L=0x2c;
+   
+   count++;
+   if(count==200){
+      count=0;
+      sec_count++;
+      PORTD=sec_count;
+   }
+   
+
+}
+
+//Reset Vector Address
+#build(reset=0x200)
+//Interrupts Vector Address
+#build(interrupt=0x208)
+
+//Bootloader Area
+#org 0x0000,0x01ff
+void bootloader() 
+{
+   #asm
+   nop //No Operation
+   #endasm
+} 
+
+void main()
+{
+
+   TRISD=0x00;
+   PORTD=0x00;
+
+   count=0;
+   sec_count=0;
+
+   TMR1IF=1;
+   TMR1IE=1;
+   TMR1IP=1;
+   
+   GIEL=1; 
+ 
+   
+   ADCON0=0x0F;
+   ADCON1=0x80;
+   
+
+
+   PA5=0;
+   PC2=0;
+   
+   TRISA=0x02;
+   TRISC=0x80; //CCP1 pin을 출력으로 할당 
+   
+ 
+   
+   T2CON=0x05;
+   PR2=127;
+
+   printf("Let's put y");
+   
+   do{
+      ch=getc();
+   }while(ch!='y');
+   
+   printf("\n\r operate sec");
+   
+   gets(st);
+   puts(st);
+   num=atoi(st);
+     
+       
+   TMR1H=0xcf;
+   TMR1L=0x2c;  
+ 
+   T1CON=0x91;   
+   
+   GIEH=1;  
+   
+   CCP1CON=0x0C;
+   
+   
+   while(1){
+      
+      GODONE=1;
+      while(GODONE);
+      k=(int16)(ADRESH&0xff)*0x100+(ADRESL&0xff);
+      value=k;
+      
+      printf("CDS value is %lu \n\r", k);
+      
+      
+      DCxB0=(short)value;
+      DCxB1=(short)(value>>1);
+      CCPR1L=(unsigned int)(value>>1); 
+       
+      
+      delay_ms(100);
+      
+      if(num==sec_count){
+
+      CCP1CON=0x00;
+      PC2=0;       
+      T1CON=0x00;
+      break;
+      }
+      
+   }
+  
+   printf("good job\n\r");
+   
+
+   
+}
