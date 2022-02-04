@@ -1,0 +1,92 @@
+#include <18F452.h>
+#device *=16 adc=10
+#use delay(clock=20000000)
+#use RS232(baud=9600, parity=N, xmit=PIN_C6, rcv=PIN_C7)
+
+#include <stdlib.h>
+#include <myreg.h>
+
+long k, value;
+
+#int_ext
+void ext_isr()
+{
+   value=0;
+   CCP1CON=0x00;
+   PC2=0;   
+
+}
+
+
+//Reset Vector Address
+#build(reset=0x200)
+//Interrupts Vector Address
+#build(interrupt=0x208)
+
+//Bootloader Area
+#org 0x0000,0x01ff
+void bootloader() 
+{
+   #asm
+   nop //No Operation
+   #endasm
+} 
+
+void main()
+{
+   char ch;
+
+   
+   INT0IF=1;
+   INT0IE=1;
+   
+   ADCON0=0x0F;
+   ADCON1=0x80;
+   
+   PA5=0;
+   PC2=0;
+   
+   TRISC=0x80; //CCP1 pin을 출력으로 할당 
+   
+   T2CON=0x05;
+   PR2=127;
+   
+   GIEH=1;
+
+      
+   printf("Let's put y");
+   
+   do{
+      ch=getc();
+   }while(ch!='y');
+   
+   CCP1CON=0x0C;		//PWM 모드로 할당 (CCP1CON is justified pwm and duty bit (ccp1con 4-5 bit))
+   
+   while(1){
+      
+      GODONE=1;
+      while(GODONE);
+      k=(int16)(ADRESH&0xff)*0x100+(ADRESL&0xff);
+      value=k;
+      
+      printf("CDS value is %lu \n\r", k);
+      
+      
+      DCxB0=(short)value;
+      DCxB1=(short)(value>>1);
+      CCPR1L=(unsigned int)(value>>1); 
+       
+      
+      delay_ms(100);
+      
+      if(value==0){
+      break;
+      }
+      
+   }
+  
+   printf("good job\n\r");
+   
+
+   
+}
