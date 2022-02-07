@@ -1,0 +1,156 @@
+#include <18F452.h>
+#use delay(clock=20000000)
+#use rs232(baud=9600, PARITY=N, xmit=PIN_C6, rcv=PIN_C7)
+#include <stdlib.h>
+#include <input.c>
+#include <my_register.h>
+
+
+
+float kp=0.001;  //0.00215  0.0015(X) 임의의 값들임 kp는 빨리 제어속도에 도달하도록 도와줌
+float kd=0.00020;  //0.000610         kd는 정상상태 오차를 줄임
+float ki=0.00004;  //0.0000321        ki는 오버슛을 줄임
+
+float target_rpm;
+float u, rpm;
+float err,err_sum,old_err;
+
+long int encoder;
+long int en_count[201];
+long int x;
+
+unsigned int STOP_KEY=0,num=0;
+int status=0;
+unsigned int i=0;
+
+#int_rtcc
+void timer0_isr()
+{
+    TMR0IE=0;     //stop state when operate int_rtcc
+    
+    encoder=(long int)(TMR1H&0xff)*0x100+(TMR1L&0xff);    //timer1 count external clock
+    en_count[num]=encoder;
+    num=num+1;
+
+    if(num>=200) {
+        status=1;
+        stop_key=1;
+    }
+    else{
+        status=1;
+        TMR1H=0;    //initialize timer1
+        TMR1L=0;
+        TMR0IE=1;   //on timer0 interrupt
+    }
+}
+
+//Reset Vector Address
+#build(reset=0x200)
+//Interrupts Vector Address
+#build(interrupt=0x208)
+
+//Bootloader Area
+#org 0x0000,0x01ff
+void bootloader() 
+{
+   #asm
+   nop //No Operation
+   #endasm
+} 
+
+void set_pwm_duty(long a)
+{
+    DCxB0=(short)a;
+    DCxB1=(short)(a>>1);
+    CCPR1L=(unsigned int)(a>>2); 
+}
+
+void setting()
+{
+//------PWM SETTING
+
+    TRISA=0x00;   //moter setting (TrisA.5 -> output) AN4/SS/LVDIN
+    TRISC=0x81;   //CCP1 -> output, c7 = in(DT), c6 = out(CK), c0 = in(timer1 ex_clock)
+
+    PA5=0;   //
+    PC2=0;   //moter stop
+    
+    T2CON=0x05;      //1:1Posescale, Prescaler - 4
+    CCP1CON=0x0c;    //PWM Mode set
+    PR2=127;         //512 is %100 duty
+    
+    set_pwm_duty(0); //first duty is 0
+
+//------TIMER1 SETTING
+    
+    T1CON=0b10000111;   //External clock input(PC0)  ?? T1CON.2 ==> no synchronize
+    TMR1H=0x00;         //
+    TMR1L=0x00;         //initialize
+    
+//------TIMER0 SETTING
+
+    T0CON=0xc6; //0b1100 0110 Prescaler = 128 
+    TMR0L=0x00; 
+    TMR0IE=1;   //interrupt setting 
+    TMR0IF=0;
+    TMR0IP=1;
+
+
+    PEIE=1;
+    GIE=1;      //global
+    
+
+}
+
+void main()
+{
+
+    char ch[5];    
+    i=0;
+    status=0; stop_key=0;
+    u=0.0; err=err_sum=old_err=0.0;
+    encoder=0;
+
+
+
+    printf("Target rpm : ");   
+    
+    gets(ch);
+    target_rpm=atof(ch);
+
+    printf(" %f \r\n",target_rpm);
+
+    setting();  //set_pwm_duty = 0
+ 
+    
+    while(stop_key!=1){
+   
+           while(status!=1);
+             
+           rpm=(float)((encoder*17.8814));    //17.8814 = (60 × 𝑒𝑛𝑐𝑜𝑑𝑒𝑟)/(6,5536𝑚𝑠𝑒𝑐 (timer0 sampling time) × 512(엔코더 분해능) ) = 17.8814×𝑒𝑛𝑐𝑜𝑑𝑒𝑟
+           err=target_rpm-rpm;
+           err_sum+=err;
+   
+           u=(kp*err)+(ki*err_sum)+(kd*(err-old_err));
+  
+           old_err=err;
+   
+           if(u > 5.)  u = 5.0;
+           if(u <= 0.2)  u = 0.2;    //0.2v는 모터의 Dead Zone
+   
+           set_pwm_duty((long)(102.4*u));   // 5 : 512 = u : x
+           
+           status=0;
+     }
+   
+    set_pwm_duty(0); //motor stop
+    TMR0IE = 0;    
+
+    PA5=0;
+    PC2=0;
+    
+    for(i=0; i<200; i++)
+          printf("\r\n %f", (float)(en_count[i]*17.8814));    //print data in ram
+   
+    printf("\r\nThe End!!...........");
+}
